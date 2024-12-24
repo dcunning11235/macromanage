@@ -1,7 +1,7 @@
 # data_export.py
 import pandas as pd
-from typing import List, Dict
-from datetime import datetime, timedelta
+from typing import Dict
+from datetime import datetime
 import json
 from base_types import DailyLog
 from progress_tracker import ProgressTracker
