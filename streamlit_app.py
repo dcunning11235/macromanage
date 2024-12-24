@@ -8,6 +8,36 @@ from base_types import UserStats, DailyLog, DietMode, ActivityLevel, TrainingLev
 import json
 
 
+def initialize_session_state():
+    """Initialize session state variables"""
+    if 'tracker' not in st.session_state:
+        st.session_state.tracker = MacroTracker()
+    if 'current_stats' not in st.session_state:
+        st.session_state.current_stats = None
+
+
+def create_metrics_chart(df, metrics):
+    """Create a line chart for selected metrics"""
+    fig = go.Figure()
+
+    for metric in metrics:
+        fig.add_trace(go.Scatter(
+            x=df['date'],
+            y=df[metric],
+            name=metric.replace('_', ' ').title(),
+            mode='lines+markers'
+        ))
+
+    fig.update_layout(
+        height=400,
+        margin=dict(l=20, r=20, t=40, b=20),
+        title_text='Progress Over Time',
+        hovermode='x'
+    )
+
+    return fig
+
+
 def show_settings_sidebar():
     """Display settings sidebar"""
     with st.sidebar:
@@ -111,7 +141,92 @@ def show_daily_log_tab():
         st.success("Log added successfully!")
 
 
-# [Previous functions for creating charts remain the same]
+def show_recommendations_tab():
+    """Display recommendations"""
+    st.header("Your Recommendations")
+
+    if not st.session_state.current_stats:
+        st.warning("Please set your stats in the sidebar first.")
+        return
+
+    diet_mode = show_settings_sidebar()
+    recs = st.session_state.tracker.get_recommendations(st.session_state.current_stats, diet_mode)
+
+    # Display main targets
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        st.metric("Target Calories", f"{recs['calories']} kcal", key="target_calories")
+    with col2:
+        st.metric("Protein", f"{recs['macros']['protein']}g", key="target_protein")
+    with col3:
+        st.metric("Carbs", f"{recs['macros']['carbs']}g", key="target_carbs")
+    with col4:
+        st.metric("Fat", f"{recs['macros']['fat']}g", key="target_fat")
+
+    # Display meal timing
+    st.subheader("Meal Timing")
+    meal_cols = st.columns(len(recs['meal_timing']))
+    for i, (meal, cals) in enumerate(recs['meal_timing'].items()):
+        with meal_cols[i]:
+            st.metric(meal.replace('_', ' ').title(), f"{cals} kcal", key=f"meal_timing_{i}")
+
+    # Display adjustments if any
+    if recs['adjustments']:
+        st.subheader("Suggested Adjustments")
+        for i, adj in enumerate(recs['adjustments']):
+            severity_color = {
+                'low': 'blue',
+                'medium': 'orange',
+                'high': 'red'
+            }[adj.severity]
+            st.markdown(f":{severity_color}[{adj.suggestion}]", key=f"adjustment_{i}")
+
+    st.info(recs['explanation'])
+
+
+def show_progress_tab():
+    """Display progress charts and analysis"""
+    st.header("Progress Analysis")
+
+    if len(st.session_state.tracker.logs) == 0:
+        st.info("Add some logs to see progress charts!")
+        return
+
+    summary = st.session_state.tracker.get_progress_summary()
+
+    # Progress charts
+    metrics = st.multiselect(
+        "Select metrics to display",
+        ['weight', 'body_fat', 'calories', 'protein', 'carbs', 'fat'],
+        default=['weight'],
+        key="metric_select"
+    )
+
+    df = st.session_state.tracker.data_manager.to_dataframe()
+    st.plotly_chart(create_metrics_chart(df, metrics), use_container_width=True)
+
+    # Summary stats
+    col1, col2 = st.columns(2)
+    with col1:
+        st.subheader("Overall Changes")
+        for i, (metric, value) in enumerate(summary['overall_changes'].items()):
+            st.metric(
+                metric.replace('_', ' ').title(),
+                f"{value:.1f}",
+                key=f"change_metric_{i}"
+            )
+
+    with col2:
+        st.subheader("Current Estimates")
+        st.metric("Estimated TDEE", f"{summary['current_tdee']:.0f} kcal", key="tdee_estimate")
+        st.metric("Adherence Rate", f"{summary['adherence']['logging_adherence']:.1%}", key="adherence_rate")
+
+    # Suggestions
+    if summary['suggestions']:
+        st.subheader("Suggestions")
+        for i, suggestion in enumerate(summary['suggestions']):
+            st.info(suggestion, icon="ℹ️")
+
 
 def show_data_tab():
     """Display data management options"""
@@ -138,9 +253,11 @@ def show_data_tab():
                 st.error(f"Export failed: {str(e)}")
 
     with tab2:
-        uploaded_file = st.file_uploader("Choose a file to import",
-                                         type=['csv', 'xlsx', 'json'],
-                                         key="file_uploader")
+        uploaded_file = st.file_uploader(
+            "Choose a file to import",
+            type=['csv', 'xlsx', 'json'],
+            key="file_uploader"
+        )
         source = st.selectbox(
             "Data Source",
             ["General", "MyFitnessPal", "Custom"],
@@ -153,14 +270,6 @@ def show_data_tab():
                 st.success("Data imported successfully!")
             except Exception as e:
                 st.error(f"Import failed: {str(e)}")
-
-
-def initialize_session_state():
-    """Initialize session state variables"""
-    if 'tracker' not in st.session_state:
-        st.session_state.tracker = MacroTracker()
-    if 'current_stats' not in st.session_state:
-        st.session_state.current_stats = None
 
 
 def main():
