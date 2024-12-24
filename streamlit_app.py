@@ -44,7 +44,7 @@ def show_settings_sidebar():
         st.header("User Settings")
 
         # Basic Info
-        weight = st.number_input("Current Weight (kg)", 40.0, 200.0, 80.0, key="user_settings_weight")
+        weight = st.number_input("Current Weight (kg)", 40.0, 200.0, 80.0, key="settings_weight")
         body_fat = st.number_input("Body Fat %", 5.0, 50.0, 15.0, key="settings_bf")
 
         # Goals
@@ -149,8 +149,9 @@ def show_recommendations_tab():
         st.warning("Please set your stats in the sidebar first.")
         return
 
-    diet_mode = show_settings_sidebar()
-    recs = st.session_state.tracker.get_recommendations(st.session_state.current_stats, diet_mode)
+    if 'diet_mode' not in st.session_state:
+        st.session_state.diet_mode = show_settings_sidebar()
+    recs = st.session_state.tracker.get_recommendations(st.session_state.current_stats, st.session_state.diet_mode)
 
     # Display main targets
     col1, col2, col3, col4 = st.columns(4)
@@ -282,7 +283,8 @@ def main():
     st.title("Macro Tracker")
 
     initialize_session_state()
-    diet_mode = show_settings_sidebar()
+    if 'diet_mode' not in st.session_state:
+        st.session_state.diet_mode = show_settings_sidebar()
 
     # Main content area
     tab1, tab2, tab3, tab4 = st.tabs([
