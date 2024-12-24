@@ -44,7 +44,7 @@ def show_settings_sidebar():
         st.header("User Settings")
 
         # Basic Info
-        weight = st.number_input("Current Weight (kg)", 40.0, 200.0, 80.0, key="settings_weight")
+        weight = st.number_input("Current Weight (kg)", 40.0, 200.0, 80.0) #, key="settings_weight")
         body_fat = st.number_input("Body Fat %", 5.0, 50.0, 15.0, key="settings_bf")
 
         # Goals
