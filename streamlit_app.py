@@ -2,7 +2,7 @@ import streamlit as st
 import plotly.graph_objects as go
 from datetime import datetime
 from macro_tracker import MacroTracker
-from base_types import UserStats, DailyLog, DietMode
+from models import UserStats, DailyLog, DietMode
 
 
 def main():
