@@ -9,6 +9,9 @@ class ProgressTracker:
     def __init__(self, logs: List[DailyLog]):
         self.logs = sorted(logs, key=lambda x: x.date)
 
+    def len(self):
+        return len(self.logs)
+
     def calculate_tdee(self, days: int = 14) -> Optional[float]:
         """Calculate TDEE based on weight change and calorie intake"""
         if len(self.logs) < days:
