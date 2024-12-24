@@ -13,7 +13,178 @@ class DataManager:
     def __init__(self, tracker: ProgressTracker):
         self.tracker = tracker
 
-    # [Previous methods remain the same...]
+    def to_dataframe(self) -> pd.DataFrame:
+        """Convert tracking data to DataFrame with calculated metrics"""
+        data = []
+        for log in self.tracker.logs:
+            data.append({
+                'date': log.date,
+                'weight': log.weight,
+                'body_fat': log.body_fat,
+                'calories': log.calories,
+                'protein': log.protein,
+                'carbs': log.carbs,
+                'fat': log.fat,
+                'lean_mass': log.lean_mass,
+                'fat_mass': log.fat_mass,
+                'steps': log.steps,
+                'water': log.water,
+                'sleep': log.sleep,
+                'notes': log.notes
+            })
+
+        df = pd.DataFrame(data)
+
+        # Add calculated columns
+        if not df.empty:
+            df['weight_change'] = df['weight'].diff()
+            df['lean_mass_change'] = df['lean_mass'].diff()
+            df['fat_mass_change'] = df['fat_mass'].diff()
+
+            # Add rolling averages
+            df['weight_7day_avg'] = df['weight'].rolling(7).mean()
+            df['calories_7day_avg'] = df['calories'].rolling(7).mean()
+            df['protein_7day_avg'] = df['protein'].rolling(7).mean()
+
+            # Add week-over-week changes
+            df['weekly_weight_change'] = df['weight'].diff(7)
+            df['weekly_lean_change'] = df['lean_mass'].diff(7)
+            df['weekly_fat_change'] = df['fat_mass'].diff(7)
+
+        return df
+
+    def export_csv(self, filename: str) -> str:
+        """Export data to CSV with summary statistics"""
+        df = self.to_dataframe()
+
+        # Export main data
+        df.to_csv(filename, index=False)
+
+        # Calculate summary statistics
+        summary = {
+            'start_date': df['date'].min(),
+            'end_date': df['date'].max(),
+            'total_days': len(df),
+            'starting_weight': df['weight'].iloc[0],
+            'ending_weight': df['weight'].iloc[-1],
+            'total_weight_change': df['weight'].iloc[-1] - df['weight'].iloc[0],
+            'avg_weekly_change': df['weekly_weight_change'].mean(),
+            'avg_calories': df['calories'].mean(),
+            'avg_protein': df['protein'].mean(),
+            'adherence_rate': (df['calories'] > 0).mean() * 100
+        }
+
+        if df['lean_mass'].notna().any():
+            summary.update({
+                'lean_mass_change': df['lean_mass'].iloc[-1] - df['lean_mass'].iloc[0],
+                'fat_mass_change': df['fat_mass'].iloc[-1] - df['fat_mass'].iloc[0]
+            })
+
+        # Export summary
+        summary_filename = filename.replace('.csv', '_summary.csv')
+        pd.DataFrame([summary]).to_csv(summary_filename, index=False)
+
+        return f"Data exported to {filename} and summary to {summary_filename}"
+
+    def get_weekly_summary(self) -> pd.DataFrame:
+        """Generate weekly progress summary"""
+        df = self.to_dataframe()
+        df['week'] = pd.to_datetime(df['date']).dt.isocalendar().week
+
+        weekly = df.groupby('week').agg({
+            'weight': ['mean', 'min', 'max', 'std'],
+            'calories': ['mean', 'std', 'count'],
+            'protein': ['mean', 'min', 'max'],
+            'body_fat': 'mean',
+            'lean_mass': 'mean',
+            'fat_mass': 'mean'
+        }).round(1)
+
+        weekly.columns = ['_'.join(col).strip() for col in weekly.columns.values]
+        return weekly
+
+    def export_json(self, filename: str) -> str:
+        """Export all data in JSON format with metadata"""
+        data = {
+            'logs': [self._log_to_dict(log) for log in self.tracker.logs],
+            'metadata': {
+                'export_date': datetime.now().isoformat(),
+                'total_logs': len(self.tracker.logs),
+                'date_range': {
+                    'start': min(log.date for log in self.tracker.logs).isoformat(),
+                    'end': max(log.date for log in self.tracker.logs).isoformat()
+                }
+            },
+            'summary': self._generate_summary()
+        }
+
+        with open(filename, 'w') as f:
+            json.dump(data, f, indent=2)
+
+        return f"Data exported to {filename}"
+
+    def export_excel(self, filename: str) -> str:
+        """Export data to Excel with multiple sheets"""
+        df = self.to_dataframe()
+        weekly = self.get_weekly_summary()
+        summary = pd.DataFrame([self._generate_summary()])
+
+        with pd.ExcelWriter(filename) as writer:
+            df.to_excel(writer, sheet_name='Daily Logs', index=False)
+            weekly.to_excel(writer, sheet_name='Weekly Summary')
+            summary.to_excel(writer, sheet_name='Overall Summary', index=False)
+
+            # Add some basic charts
+            workbook = writer.book
+            worksheet = writer.sheets['Daily Logs']
+
+            # Weight progress chart
+            chart = workbook.add_chart({'type': 'line'})
+            chart.add_series({
+                'name': 'Weight',
+                'categories': f'=Daily Logs!$A$2:$A${len(df) + 1}',
+                'values': f'=Daily Logs!$B$2:$B${len(df) + 1}'
+            })
+            worksheet.insert_chart('O2', chart)
+
+        return f"Data exported to {filename}"
+
+    def _log_to_dict(self, log: DailyLog) -> Dict:
+        """Convert DailyLog to dictionary for export"""
+        return {
+            'date': log.date.isoformat(),
+            'weight': log.weight,
+            'body_fat': log.body_fat,
+            'calories': log.calories,
+            'protein': log.protein,
+            'carbs': log.carbs,
+            'fat': log.fat,
+            'lean_mass': log.lean_mass,
+            'fat_mass': log.fat_mass,
+            'steps': log.steps,
+            'water': log.water,
+            'sleep': log.sleep,
+            'notes': log.notes
+        }
+
+    def _generate_summary(self) -> Dict:
+        """Generate overall progress summary"""
+        df = self.to_dataframe()
+        if df.empty:
+            return {}
+
+        return {
+            'duration_days': len(df),
+            'weight_change': float(df['weight'].iloc[-1] - df['weight'].iloc[0]),
+            'average_weekly_change': float(df['weekly_weight_change'].mean()),
+            'average_calories': float(df['calories'].mean()),
+            'average_protein': float(df['protein'].mean()),
+            'adherence_rate': float((df['calories'] > 0).mean() * 100),
+            'body_fat_change': float(df['body_fat'].iloc[-1] - df['body_fat'].iloc[0])
+            if df['body_fat'].notna().any() else None,
+            'lean_mass_change': float(df['lean_mass'].iloc[-1] - df['lean_mass'].iloc[0])
+            if df['lean_mass'].notna().any() else None
+        }
 
     def import_csv(self, filename: str) -> List[DailyLog]:
         """Import data from CSV file"""
