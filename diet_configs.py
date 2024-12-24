@@ -1,7 +1,7 @@
 # diet_configs.py
 from dataclasses import dataclass
 from typing import Dict
-from base_types import DietMode, MacroSplit
+from models import DietMode, MacroSplit
 
 
 @dataclass

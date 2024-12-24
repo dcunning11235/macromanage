@@ -1,7 +1,7 @@
 # adjustment_system.py
 from dataclasses import dataclass
 from typing import List, Dict, Optional
-from base_types import DietMode, UserStats
+from models import DietMode, UserStats
 from diet_configs import DietConfigs
 from progress_tracker import ProgressTracker
 

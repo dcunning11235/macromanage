@@ -1,7 +1,7 @@
 # progress_tracker.py
 from typing import List, Dict, Optional
 import numpy as np
-from base_types import DailyLog
+from models import DailyLog
 
 
 class ProgressTracker:

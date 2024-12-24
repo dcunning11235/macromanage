@@ -1,6 +1,6 @@
 # nutrition_calculator.py
 from typing import Dict, Tuple
-from base_types import UserStats, DietMode, MacroSplit
+from models import UserStats, DietMode, MacroSplit
 from diet_configs import DietConfigs, DietConfig
 from progress_tracker import ProgressTracker
 

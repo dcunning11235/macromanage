@@ -1,5 +1,5 @@
 from datetime import datetime
-from base_types import DailyLog, UserStats, DietMode
+from models import DailyLog, UserStats, DietMode
 from progress_tracker import ProgressTracker
 from nutrition_calculator import NutritionCalculator
 from adjustment_system import DynamicAdjuster

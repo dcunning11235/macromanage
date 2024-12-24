@@ -3,7 +3,7 @@ import pandas as pd
 from typing import Dict
 from datetime import datetime
 import json
-from base_types import DailyLog
+from models import DailyLog
 from progress_tracker import ProgressTracker
 
 
