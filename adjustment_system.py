@@ -12,7 +12,7 @@ class Adjustment:
     suggestion: str
 
 
-class AdjustmentSystem:
+class DynamicAdjuster:
     def __init__(self, logs: List[DailyLog]):
         self.logs = logs
 
