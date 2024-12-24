@@ -16,6 +16,9 @@ class DynamicAdjuster:
     def __init__(self, logs: List[DailyLog]):
         self.logs = logs
 
+    def len(self):
+        return len(self.logs)
+
     def calculate_weekly_change(self, days: int = 7) -> Dict[str, float]:
         """Calculate rate of change for weight and body composition"""
         if len(self.logs) < days:
