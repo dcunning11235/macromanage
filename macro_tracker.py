@@ -1,4 +1,6 @@
-from typing import List, Dict, Optional, Tuple
+from io import BytesIO
+from pathlib import Path
+from typing import List, Dict, Optional, Tuple, Union
 from datetime import datetime, timedelta
 from base_types import DailyLog, UserStats, DietMode
 from progress_tracker import ProgressTracker
@@ -16,9 +18,16 @@ class MacroTracker:
         self.adjuster = DynamicAdjuster(self.tracker)
         self.data_manager = DataManager(self.tracker)
 
-    def load_data(self, filename: str, source: str = None) -> None:
-        """Load tracking data from file"""
-        imported_logs = self.data_manager.import_data(filename, source)
+    def load_data(self, file: Union[str, BytesIO, Path], source: str = None, units: str = 'metric') -> None:
+        """
+        Load tracking data from file
+
+        Args:
+            file: File path or uploaded file object
+            source: Source of the data (e.g., 'myfitnesspal')
+            units: Unit system of the input data ('metric' or 'imperial')
+        """
+        imported_logs = self.data_manager.import_data(file, source, units)
         self.logs = self.data_manager.merge_logs(imported_logs)
         self._update_components()
 
