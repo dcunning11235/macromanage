@@ -115,7 +115,7 @@ class NutritionCalculator:
                             (maintenance_calories * 0.2)) / 4)  # Remaining to carbs
         }
 
-    def get_minimum_nutrients(self, stats: UserStats) -> Dict[str, float]:
+    def get_minimum_nutrients(self, stats: UserStats, calories: int) -> Dict[str, float]:
         """Calculate minimum recommended nutrients"""
         return {
             'protein': round(stats.weight * 1.6),  # Minimum protein

@@ -1,6 +1,7 @@
 from dataclasses import dataclass
-from typing import List, Dict, Tuple
-from base_types import UserStats, DietMode
+from typing import List, Dict, Optional, Tuple
+from datetime import datetime, timedelta
+from base_types import UserStats, DietMode, DailyLog
 from progress_tracker import ProgressTracker
 
 
@@ -58,6 +59,27 @@ class DynamicAdjuster:
         recent = logs[-days:]
         adherent_days = sum(1 for log in recent if log.calories > 0)
         return adherent_days / len(recent)
+
+    def get_net_adjustment(self, adjustments: List[Adjustment]) -> Dict[str, int]:
+        """Combine all adjustments into final recommendations"""
+        if not adjustments:
+            return {'calories': 0, 'protein': 0}
+
+        # Prioritize by severity
+        high_priority = [adj for adj in adjustments if adj.severity == 'high']
+        med_priority = [adj for adj in adjustments if adj.severity == 'medium']
+
+        # Take the largest adjustment in each category
+        calorie_adj = max([adj.calories for adj in high_priority], default=0) if high_priority else \
+            max([adj.calories for adj in med_priority], default=0)
+
+        protein_adj = max([adj.protein for adj in high_priority], default=0) if high_priority else \
+            max([adj.protein for adj in med_priority], default=0)
+
+        return {
+            'calories': calorie_adj,
+            'protein': protein_adj
+        }
 
     def calculate_adjustments(self, stats: UserStats, mode: DietMode) -> List[Adjustment]:
         """Calculate needed adjustments based on progress"""

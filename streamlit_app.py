@@ -141,7 +141,7 @@ def show_daily_log_tab():
         st.success("Log added successfully!")
 
 
-def show_recommendations_tab():
+def show_recommendations_tab(diet_mode: DietMode):
     """Display recommendations"""
     st.header("Your Recommendations")
 
@@ -149,40 +149,51 @@ def show_recommendations_tab():
         st.warning("Please set your stats in the sidebar first.")
         return
 
-    if 'diet_mode' not in st.session_state:
-        st.session_state.diet_mode = show_settings_sidebar()
-    recs = st.session_state.tracker.get_recommendations(st.session_state.current_stats, st.session_state.diet_mode)
+    recs = st.session_state.tracker.get_recommendations(st.session_state.current_stats, diet_mode)
 
     # Display main targets
     col1, col2, col3, col4 = st.columns(4)
-    with col1:
-        st.metric("Target Calories", f"{recs['calories']} kcal", key="target_calories")
-    with col2:
-        st.metric("Protein", f"{recs['macros']['protein']}g", key="target_protein")
-    with col3:
-        st.metric("Carbs", f"{recs['macros']['carbs']}g", key="target_carbs")
-    with col4:
-        st.metric("Fat", f"{recs['macros']['fat']}g", key="target_fat")
+    if 'calories' in recs:
+        with col1:
+            st.metric("Target Calories", f"{recs['calories']} kcal")
+        with col2:
+            st.metric("Protein", f"{recs['macros']['protein']}g")
+        with col3:
+            st.metric("Carbs", f"{recs['macros']['carbs']}g")
+        with col4:
+            st.metric("Fat", f"{recs['macros']['fat']}g")
 
     # Display meal timing
-    st.subheader("Meal Timing")
-    meal_cols = st.columns(len(recs['meal_timing']))
-    for i, (meal, cals) in enumerate(recs['meal_timing'].items()):
-        with meal_cols[i]:
-            st.metric(meal.replace('_', ' ').title(), f"{cals} kcal", key=f"meal_timing_{i}")
+    if 'meal_timing' in recs and recs['meal_timing']:
+        st.subheader("Meal Timing")
+        meal_cols = st.columns(len(recs['meal_timing']))
+        for i, (meal, cals) in enumerate(recs['meal_timing'].items()):
+            with meal_cols[i]:
+                st.metric(meal.replace('_', ' ').title(), f"{cals} kcal")
+
+    # Display minimum nutrients if available
+    if 'minimum_nutrients' in recs and recs['minimum_nutrients']:
+        st.subheader("Minimum Daily Targets")
+        min_nutrients = recs['minimum_nutrients']
+        cols = st.columns(len(min_nutrients))
+        for col, (nutrient, value) in zip(cols, min_nutrients.items()):
+            with col:
+                unit = 'g' if nutrient != 'water' else 'L'
+                st.metric(nutrient.title(), f"{value}{unit}")
 
     # Display adjustments if any
-    if recs['adjustments']:
+    if recs.get('adjustments'):
         st.subheader("Suggested Adjustments")
-        for i, adj in enumerate(recs['adjustments']):
+        for adj in recs['adjustments']:
             severity_color = {
                 'low': 'blue',
                 'medium': 'orange',
                 'high': 'red'
             }[adj.severity]
-            st.markdown(f":{severity_color}[{adj.suggestion}]", key=f"adjustment_{i}")
+            st.markdown(f":{severity_color}[{adj.suggestion}]")
 
-    st.info(recs['explanation'])
+    if 'explanation' in recs:
+        st.info(recs['explanation'])
 
 
 def show_progress_tab():
@@ -204,29 +215,44 @@ def show_progress_tab():
     )
 
     df = st.session_state.tracker.data_manager.to_dataframe()
-    st.plotly_chart(create_metrics_chart(df, metrics), use_container_width=True)
+    if not df.empty:
+        st.plotly_chart(create_metrics_chart(df, metrics), use_container_width=True)
 
     # Summary stats
     col1, col2 = st.columns(2)
     with col1:
         st.subheader("Overall Changes")
-        for i, (metric, value) in enumerate(summary['overall_changes'].items()):
-            st.metric(
-                metric.replace('_', ' ').title(),
-                f"{value:.1f}",
-                key=f"change_metric_{i}"
-            )
+        if 'overall_changes' in summary and summary['overall_changes']:
+            for metric, value in summary['overall_changes'].items():
+                if value is not None:
+                    st.metric(
+                        metric.replace('_', ' ').title(),
+                        f"{value:.1f}"
+                    )
+        else:
+            st.info("Need more data to calculate changes")
 
     with col2:
         st.subheader("Current Estimates")
-        st.metric("Estimated TDEE", f"{summary['current_tdee']:.0f} kcal", key="tdee_estimate")
-        st.metric("Adherence Rate", f"{summary['adherence']['logging_adherence']:.1%}", key="adherence_rate")
+        tdee = summary.get('current_tdee')
+        if tdee:
+            st.metric("Estimated TDEE", f"{tdee:.0f} kcal")
+        else:
+            st.info("Need more data to estimate TDEE (at least 7 days)")
+
+        adherence = summary.get('adherence', {}).get('logging_adherence')
+        if adherence is not None:
+            st.metric("Adherence Rate", f"{adherence:.1%}")
+        else:
+            st.info("Need more data to calculate adherence")
 
     # Suggestions
-    if summary['suggestions']:
+    if summary.get('suggestions'):
         st.subheader("Suggestions")
-        for i, suggestion in enumerate(summary['suggestions']):
+        for suggestion in summary['suggestions']:
             st.info(suggestion, icon="ℹ️")
+    else:
+        st.info("Need more data to generate suggestions")
 
 
 def show_data_tab():
@@ -283,8 +309,9 @@ def main():
     st.title("Macro Tracker")
 
     initialize_session_state()
-    if 'diet_mode' not in st.session_state:
-        st.session_state.diet_mode = show_settings_sidebar()
+
+    # Call show_settings_sidebar once and store the result
+    diet_mode = show_settings_sidebar()
 
     # Main content area
     tab1, tab2, tab3, tab4 = st.tabs([
@@ -295,7 +322,7 @@ def main():
         show_daily_log_tab()
 
     with tab2:
-        show_recommendations_tab()
+        show_recommendations_tab(diet_mode)
 
     with tab3:
         show_progress_tab()

@@ -60,7 +60,7 @@ class MacroTracker:
         meal_timing = self.calculator.get_meal_timing(target_calories, meal_count=4)
 
         # Get minimum nutrients
-        min_nutrients = self.calculator.get_minimum_nutrients(stats)
+        min_nutrients = self.calculator.get_minimum_nutrients(stats, target_calories)
 
         return {
             'calories': target_calories,
