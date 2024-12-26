@@ -18,34 +18,52 @@ class DataManager:
         for log in self.tracker.logs:
             data.append({
                 'date': log.date,
-                'weight': log.weight,
-                'body_fat': log.body_fat,
-                'calories': log.calories,
-                'protein': log.protein,
-                'carbs': log.carbs,
-                'fat': log.fat,
-                'lean_mass': log.lean_mass,
-                'fat_mass': log.fat_mass,
-                'steps': log.steps,
-                'water': log.water,
-                'sleep': log.sleep,
+                'weight': log.weight if log.weight != 0 else np.nan,
+                'body_fat': log.body_fat if log.body_fat != 0 else np.nan,
+                'calories': log.calories if log.calories != 0 else np.nan,
+                'protein': log.protein if log.protein != 0 else np.nan,
+                'carbs': log.carbs if log.carbs != 0 else np.nan,
+                'fat': log.fat if log.fat != 0 else np.nan,
+                'lean_mass': log.lean_mass if log.lean_mass is not None and log.lean_mass != 0 else np.nan,
+                'fat_mass': log.fat_mass if log.fat_mass is not None and log.fat_mass != 0 else np.nan,
+                'steps': log.steps if log.steps is not None and log.steps != 0 else np.nan,
+                'water': log.water if log.water is not None and log.water != 0 else np.nan,
+                'sleep': log.sleep if log.sleep is not None and log.sleep != 0 else np.nan,
                 'notes': log.notes
             })
 
         df = pd.DataFrame(data)
 
+        # Set proper data types
+        df = df.astype({
+            'date': 'datetime64[ns]',
+            'weight': 'float64',
+            'body_fat': 'float64',
+            'calories': 'float64',
+            'protein': 'float64',
+            'carbs': 'float64',
+            'fat': 'float64',
+            'lean_mass': 'float64',
+            'fat_mass': 'float64',
+            'steps': 'float64',  # float to handle NaN values
+            'water': 'float64',
+            'sleep': 'float64',
+            'notes': 'object'
+        })
+
         # Add calculated columns if we have data
         if not df.empty:
+            # Weight changes
             df['weight_change'] = df['weight'].diff()
             df['lean_mass_change'] = df['lean_mass'].diff()
             df['fat_mass_change'] = df['fat_mass'].diff()
 
-            # Add rolling averages
-            df['weight_7day_avg'] = df['weight'].rolling(7).mean()
-            df['calories_7day_avg'] = df['calories'].rolling(7).mean()
-            df['protein_7day_avg'] = df['protein'].rolling(7).mean()
+            # Rolling averages
+            df['weight_7day_avg'] = df['weight'].rolling(7, min_periods=1).mean()
+            df['calories_7day_avg'] = df['calories'].rolling(7, min_periods=1).mean()
+            df['protein_7day_avg'] = df['protein'].rolling(7, min_periods=1).mean()
 
-            # Add week-over-week changes
+            # Week-over-week changes
             df['weekly_weight_change'] = df['weight'].diff(7)
             df['weekly_lean_change'] = df['lean_mass'].diff(7)
             df['weekly_fat_change'] = df['fat_mass'].diff(7)

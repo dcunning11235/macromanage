@@ -10,17 +10,38 @@ class ProgressTracker:
         self.logs = sorted(logs, key=lambda x: x.date)
 
     def calculate_tdee(self, days: int = 14) -> Optional[float]:
-        """Calculate TDEE based on weight change and calorie intake"""
-        if len(self.logs) < days:
+        """
+        Calculate TDEE based on weight change and calorie intake
+
+        Uses linear regression to determine weight change rate and
+        averages daily calories over the period to estimate TDEE.
+        """
+        if len(self.logs) < 7:  # Need at least a week of data
             return None
 
-        recent_logs = self.logs[-days:]
-        avg_calories = np.mean([log.calories for log in recent_logs])
-        weight_change = recent_logs[-1].weight - recent_logs[0].weight
+        recent_logs = sorted(self.logs[-days:], key=lambda x: x.date)
+        if len(recent_logs) < 7:
+            return None
 
-        # Convert kg to lbs and use 3500 calories per pound
-        daily_cal_adjustment = (weight_change * 2.20462 * 3500) / days
-        return round(avg_calories - daily_cal_adjustment)
+        # Calculate average daily calories
+        avg_calories = np.mean([log.calories for log in recent_logs])
+
+        # Create arrays for linear regression
+        dates = np.array([(log.date - recent_logs[0].date).days for log in recent_logs])
+        weights = np.array([log.weight for log in recent_logs])
+
+        # Perform linear regression to get daily weight change rate
+        slope, _ = np.polyfit(dates, weights, 1)
+        daily_weight_change = slope  # kg per day
+
+        # Convert kg to lbs and calculate daily calorie adjustment
+        # Each pound of weight change represents 3500 calories
+        daily_cal_adjustment = (daily_weight_change * 2.20462 * 3500)
+
+        # TDEE = average calories - daily calorie surplus/deficit
+        tdee = round(avg_calories - daily_cal_adjustment)
+
+        return tdee if 500 <= tdee <= 10000 else None
 
     def get_weekly_stats(self) -> List[Dict]:
         """Calculate average stats for each week"""
