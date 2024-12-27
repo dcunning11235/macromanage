@@ -144,7 +144,7 @@ class DataManager:
         return f"Data exported to {filename}"
 
     def export_excel(self, filename: str) -> str:
-        """Export data to Excel with multiple sheets and charts"""
+        """Export data to Excel with multiple sheets"""
         df = self.to_dataframe()
         weekly = self.get_weekly_summary()
         summary = pd.DataFrame([self._generate_summary()])
@@ -342,8 +342,7 @@ class DataManager:
         for log_data in json_logs:
             try:
                 log = DailyLog(
-                    date=datetime.fromisoformat(log_data['date']),
-                    weight=float(log_data['weight']),
+                    date=datetime.fromisoformat(log_data['date']), weight=float(log_data['weight']),
                     body_fat=float(log_data.get('body_fat', 0)),
                     calories=int(log_data['calories']),
                     protein=float(log_data['protein']),
@@ -371,7 +370,7 @@ class DataManager:
             else:
                 updated_data[field] = old_value
 
-            return DailyLog(**updated_data)
+        return DailyLog(**updated_data)
 
     def _log_to_dict(self, log: DailyLog) -> Dict:
         """Convert DailyLog to dictionary for export"""
@@ -405,7 +404,7 @@ class DataManager:
             'average_protein': float(df['protein'].mean()),
             'adherence_rate': float((df['calories'] > 0).mean() * 100),
             'body_fat_change': float(df['body_fat'].iloc[-1] - df['body_fat'].iloc[0])
-            if df['body_fat'].notna().any() else None,
+                             if df['body_fat'].notna().any() else None,
             'lean_mass_change': float(df['lean_mass'].iloc[-1] - df['lean_mass'].iloc[0])
-            if df['lean_mass'].notna().any() else None
+                              if df['lean_mass'].notna().any() else None
         }

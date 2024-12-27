@@ -7,7 +7,7 @@ import json
 from pathlib import Path
 from typing import List
 from macro_tracker import MacroTracker
-from base_types import UserStats, DailyLog, DietMode, ActivityLevel, TrainingLevel
+from base_types import UserStats, DailyLog, DietMode, ActivityLevel, TrainingLevel, MacroPreset, MacroPresets
 
 
 # Unit conversion functions
@@ -80,6 +80,29 @@ def format_volume(volume: float, unit_system: str) -> str:
     return f"{volume:.1f} L"
 
 
+def calculate_projected_weight_change(target_calories: int, maintenance_calories: int,
+                                      unit_system: str = 'metric') -> str:
+    """Calculate and format projected weekly weight change"""
+    daily_deficit = target_calories - maintenance_calories
+    weekly_cal_deficit = daily_deficit * 7
+
+    # 3500 calories per pound of body weight
+    weekly_lb_change = weekly_cal_deficit / 3500
+    weekly_kg_change = weekly_lb_change / 2.20462
+
+    if abs(weekly_lb_change) < 0.1:  # Less than 0.1 lbs/week is negligible
+        return "Projected to maintain weight"
+
+    direction = "loss" if weekly_lb_change < 0 else "gain"
+
+    if unit_system == 'imperial':
+        return (f"Projected weekly {direction}: "
+                f"{abs(weekly_lb_change):.1f} lbs")
+    else:
+        return (f"Projected weekly {direction}: "
+                f"{abs(weekly_kg_change):.1f} kg")
+
+
 def save_preferences(preferences: dict):
     """Save user preferences to file"""
     prefs_file = Path("user_preferences.json")
@@ -92,12 +115,26 @@ def save_preferences(preferences: dict):
 def load_preferences() -> dict:
     """Load user preferences from file"""
     prefs_file = Path("user_preferences.json")
+    default_prefs = {
+        "unit_system": "metric",
+        "diet_mode": "STANDARD_CUT",
+        "macro_preset": "BALANCED",
+        "custom_macro_settings": {
+            "protein_factor": 2.0,
+            "fat_ratio": 0.30,
+            "min_fat": 0.8,
+            "protein_source": "body_weight"
+        }
+    }
+
     if prefs_file.exists():
         try:
-            return json.loads(prefs_file.read_text())
+            saved_prefs = json.loads(prefs_file.read_text())
+            # Merge with defaults in case new preferences were added
+            return {**default_prefs, **saved_prefs}
         except Exception:
             pass
-    return {"unit_system": "metric"}
+    return default_prefs
 
 
 def initialize_session_state():
@@ -143,7 +180,7 @@ def show_settings_sidebar():
             options=['metric', 'imperial'],
             index=0 if st.session_state.preferences["unit_system"] == "metric" else 1,
             key="unit_system",
-            on_change=lambda: save_preferences({"unit_system": st.session_state.unit_system})
+            on_change=lambda: save_preferences(st.session_state.preferences)
         )
         st.session_state.preferences["unit_system"] = unit_system
 
@@ -176,12 +213,70 @@ def show_settings_sidebar():
             key="settings_training"
         )
 
+        # Diet Mode selection with persistence
         diet_mode = st.selectbox(
             "Diet Mode",
             options=[mode.name for mode in DietMode],
+            index=[mode.name for mode in DietMode].index(st.session_state.preferences["diet_mode"]),
             format_func=lambda x: x.replace('_', ' ').title(),
-            key="settings_diet_mode"
+            key="settings_diet_mode",
+            on_change=lambda: _save_diet_preferences()
         )
+
+        preset_config = MacroPresets.get_presets()
+
+        # Macro Preset selection with persistence
+        macro_preset = st.selectbox(
+            "Macro Split Preset",
+            options=[preset.name for preset in MacroPreset],
+            index=[preset.name for preset in MacroPreset].index(st.session_state.preferences["macro_preset"]),
+            format_func=lambda x: preset_config[MacroPreset[x]].name,
+            key="settings_macro_preset",
+            on_change=lambda: _save_diet_preferences()
+        )
+
+        # Show custom macro inputs if custom selected
+        if macro_preset == MacroPreset.CUSTOM.name:
+            with st.expander("Custom Macro Settings"):
+                custom_settings = st.session_state.preferences["custom_macro_settings"]
+                new_protein_factor = st.number_input(
+                    "Protein (g/kg bodyweight)",
+                    min_value=1.0,
+                    max_value=3.0,
+                    value=float(custom_settings["protein_factor"]),
+                    step=0.1,
+                    key="custom_protein_factor"
+                )
+                new_fat_ratio = st.slider(
+                    "Fat (% of total calories)",
+                    min_value=15,
+                    max_value=75,
+                    value=int(custom_settings["fat_ratio"] * 100),
+                    key="custom_fat_ratio"
+                )
+                new_min_fat = st.number_input(
+                    "Minimum Fat (g/kg bodyweight)",
+                    min_value=0.3,
+                    max_value=2.0,
+                    value=float(custom_settings["min_fat"]),
+                    step=0.1,
+                    key="custom_min_fat"
+                )
+                new_protein_source = st.radio(
+                    "Calculate protein based on",
+                    options=["body_weight", "lean_mass"],
+                    index=0 if custom_settings["protein_source"] == "body_weight" else 1,
+                    key="custom_protein_source"
+                )
+
+                # Update custom settings in preferences
+                st.session_state.preferences["custom_macro_settings"].update({
+                    "protein_factor": new_protein_factor,
+                    "fat_ratio": new_fat_ratio / 100,
+                    "min_fat": new_min_fat,
+                    "protein_source": new_protein_source
+                })
+                save_preferences(st.session_state.preferences)
 
         # Optional Info
         with st.expander("Additional Information"):
@@ -201,7 +296,16 @@ def show_settings_sidebar():
             training_level=TrainingLevel[training]
         )
 
-        return DietMode[diet_mode]
+        return DietMode[diet_mode], MacroPreset[macro_preset]
+
+
+def _save_diet_preferences():
+    """Helper function to save diet and macro preferences"""
+    st.session_state.preferences.update({
+        "diet_mode": st.session_state.settings_diet_mode,
+        "macro_preset": st.session_state.settings_macro_preset
+    })
+    save_preferences(st.session_state.preferences)
 
 
 def show_daily_log_tab():
@@ -265,65 +369,117 @@ def show_daily_log_tab():
         st.success("Log added successfully!")
 
 
-def show_recommendations_tab(diet_mode: DietMode):
-    """Display recommendations"""
+def show_recommendations_tab(diet_mode: DietMode, macro_preset: MacroPreset):
+    """Display recommendations with manual adjustments and projections"""
     st.header("Your Recommendations")
 
     if not st.session_state.current_stats:
         st.warning("Please set your stats in the sidebar first.")
         return
 
-    unit_system = st.session_state.preferences["unit_system"]
-    recs = st.session_state.tracker.get_recommendations(st.session_state.current_stats, diet_mode)
+    recs = st.session_state.tracker.get_recommendations(st.session_state.current_stats, diet_mode, macro_preset)
 
-    # Display main targets with unit conversion
-    col1, col2, col3, col4 = st.columns(4)
+    # Base calories and manual adjustment
     if 'calories' in recs:
+        st.subheader("Calorie Targets")
+        col1, col2, col3 = st.columns([2, 1, 2])
         with col1:
-            st.metric("Target Calories", f"{recs['calories']} kcal")
-        with col2:
-            st.metric("Protein", f"{recs['macros']['protein']}g")
-        with col3:
-            st.metric("Carbs", f"{recs['macros']['carbs']}g")
-        with col4:
-            st.metric("Fat", f"{recs['macros']['fat']}g")
+            st.metric("Base Target Calories", f"{recs['calories']} kcal")
 
-    # Display meal timing
+        with col2:
+            calorie_adjustment = st.number_input(
+                "Adjust Calories",
+                min_value=-500,
+                max_value=500,
+                value=0,
+                step=25,
+                help="Fine-tune your daily calories"
+            )
+
+        adjusted_calories = recs['calories'] + calorie_adjustment
+
+        with col3:
+            st.metric("Adjusted Target Calories", f"{adjusted_calories} kcal")
+
+        # Show projected weekly changes
+        if 'maintenance_calories' in recs:
+            projection = calculate_projected_weight_change(
+                adjusted_calories,
+                recs['maintenance_calories'],
+                st.session_state.preferences["unit_system"]
+            )
+            st.info(projection)
+
+        # Recalculate macros based on adjusted calories
+        if calorie_adjustment != 0:
+            macros = st.session_state.tracker.calculator.calculate_macros(
+                adjusted_calories,
+                st.session_state.current_stats,
+                diet_mode
+            )
+        else:
+            macros = recs['macros']
+
+        # Display macros
+        st.subheader("Macro Targets")
+        macro_cols = st.columns(3)
+        with macro_cols[0]:
+            st.metric("Protein", f"{macros['protein']}g")
+        with macro_cols[1]:
+            st.metric("Carbs", f"{macros['carbs']}g")
+        with macro_cols[2]:
+            st.metric("Fat", f"{macros['fat']}g")
+
+        # Display ratios if available
+        if 'ratios' in macros:
+            ratio_cols = st.columns(3)
+            with ratio_cols[0]:
+                st.caption(f"Protein: {macros['ratios']['protein']}%")
+            with ratio_cols[1]:
+                st.caption(f"Carbs: {macros['ratios']['carbs']}%")
+            with ratio_cols[2]:
+                st.caption(f"Fat: {macros['ratios']['fat']}%")
+
+    # Display meal timing if available
     if 'meal_timing' in recs and recs['meal_timing']:
         st.subheader("Meal Timing")
         meal_cols = st.columns(len(recs['meal_timing']))
+        total_calories = adjusted_calories if 'calories' in recs else sum(recs['meal_timing'].values())
+
         for i, (meal, cals) in enumerate(recs['meal_timing'].items()):
+            # Adjust meal calories proportionally
+            if 'calories' in recs:
+                cals = round(cals * (adjusted_calories / recs['calories']))
             with meal_cols[i]:
                 st.metric(meal.replace('_', ' ').title(), f"{cals} kcal")
 
-    # Display minimum nutrients if available
-    if 'minimum_nutrients' in recs and recs['minimum_nutrients']:
-        st.subheader("Minimum Daily Targets")
-        min_nutrients = recs['minimum_nutrients']
-        cols = st.columns(len(min_nutrients))
-        for col, (nutrient, value) in zip(cols, min_nutrients.items()):
-            with col:
-                if nutrient == 'water':
-                    display_value = format_volume(value, unit_system)
-                else:
-                    unit = 'g'
-                    display_value = f"{value}{unit}"
-                st.metric(nutrient.title(), display_value)
+        # Display minimum nutrients if available
+        if 'minimum_nutrients' in recs and recs['minimum_nutrients']:
+            st.subheader("Minimum Daily Targets")
+            min_nutrients = recs['minimum_nutrients']
+            cols = st.columns(len(min_nutrients))
+            for col, (nutrient, value) in zip(cols, min_nutrients.items()):
+                with col:
+                    if nutrient == 'water':
+                        display_value = format_volume(value, st.session_state.preferences["unit_system"])
+                    else:
+                        unit = 'g'
+                        display_value = f"{value}{unit}"
+                    st.metric(nutrient.title(), display_value)
 
-    # Display adjustments if any
-    if recs.get('adjustments'):
-        st.subheader("Suggested Adjustments")
-        for adj in recs['adjustments']:
-            severity_color = {
-                'low': 'blue',
-                'medium': 'orange',
-                'high': 'red'
-            }[adj.severity]
-            st.markdown(f":{severity_color}[{adj.suggestion}]")
+        # Display adjustments if any
+        if recs.get('adjustments'):
+            st.subheader("Suggested Adjustments")
+            for adj in recs['adjustments']:
+                severity_color = {
+                    'low': 'blue',
+                    'medium': 'orange',
+                    'high': 'red'
+                }[adj.severity]
+                st.markdown(f":{severity_color}[{adj.suggestion}]")
 
-    if 'explanation' in recs:
-        st.info(recs['explanation'])
-
+        if 'explanation' in recs:
+            st.info(recs['explanation'])
 
 def show_progress_tab():
     """Display progress charts and analysis"""
@@ -368,7 +524,8 @@ def show_progress_tab():
                         display_value = value
                         unit = "kg" if 'weight' in metric.lower() else "%"
                     st.metric(
-                        metric.replace('_', ' ').title(),f"{display_value:.1f} {unit}"
+                        metric.replace('_', ' ').title(),
+                        f"{display_value:.1f} {unit}"
                     )
         else:
             st.info("Need more data to calculate changes")
@@ -450,6 +607,7 @@ def show_data_tab():
             except Exception as e:
                 st.error(f"Import failed: {str(e)}")
 
+
 def main():
     st.set_page_config(
         page_title="Macro Tracker",
@@ -462,7 +620,7 @@ def main():
     initialize_session_state()
 
     # Call show_settings_sidebar once and store the result
-    diet_mode = show_settings_sidebar()
+    diet_mode, macro_preset = show_settings_sidebar()
 
     # Main content area
     tab1, tab2, tab3, tab4 = st.tabs([
@@ -473,13 +631,14 @@ def main():
         show_daily_log_tab()
 
     with tab2:
-        show_recommendations_tab(diet_mode)
+        show_recommendations_tab(diet_mode, macro_preset)
 
     with tab3:
         show_progress_tab()
 
     with tab4:
         show_data_tab()
+
 
 if __name__ == "__main__":
     main()

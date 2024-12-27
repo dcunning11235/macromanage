@@ -1,8 +1,8 @@
-from io import BytesIO
-from pathlib import Path
 from typing import List, Dict, Optional, Tuple, Union
-from datetime import datetime, timedelta
-from base_types import DailyLog, UserStats, DietMode
+from datetime import datetime
+from pathlib import Path
+from io import BytesIO
+from base_types import UserStats, DietMode, DailyLog, MacroPreset, MacroSplitConfig
 from progress_tracker import ProgressTracker
 from nutrition_calculator import NutritionCalculator
 from adjustment_system import DynamicAdjuster
@@ -37,22 +37,41 @@ class MacroTracker:
         self.logs.sort(key=lambda x: x.date)
         self._update_components()
 
-    def get_recommendations(self, stats: UserStats, mode: DietMode) -> Dict:
+    def get_recommendations(self, stats: UserStats, mode: DietMode,
+                            macro_preset: MacroPreset = MacroPreset.BALANCED,
+                            custom_split: Optional[MacroSplitConfig] = None) -> Dict:
         """Get comprehensive nutrition recommendations"""
         # Calculate base targets
         target_calories, explanation = self.calculator.calculate_target_calories(stats, mode)
-        macros = self.calculator.calculate_macros(target_calories, stats, mode)
+
+        # Get maintenance calories if available
+        maintenance_calories = self.tracker.calculate_tdee() or self.calculator.calculate_target_calories(stats, DietMode.MAINTENANCE)[0] #target_calories
+
+        # Get macros based on preset
+        macros = self.calculator.calculate_macros(
+            target_calories,
+            stats,
+            mode,
+            macro_preset=macro_preset,
+            custom_split=custom_split
+        )
 
         # Get progress-based adjustments
-        adjustments = self.adjuster.calculate_adjustments(stats, mode)
+        adjustments = self.adjuster.calculate_adjustments(target_calories, stats, mode)
 
         # Apply adjustments if we have enough data
         if adjustments:
             changes = self.adjuster.get_net_adjustment(adjustments)
             target_calories += changes['calories']
 
-            # Recalculate macros with new calories
-            macros = self.calculator.calculate_macros(target_calories, stats, mode)
+            # Recalculate macros with adjusted calories
+            macros = self.calculator.calculate_macros(
+                target_calories,
+                stats,
+                mode,
+                macro_preset=macro_preset,
+                custom_split=custom_split
+            )
             macros['protein'] += changes['protein']
 
             # Adjust carbs to maintain calorie target
@@ -65,14 +84,13 @@ class MacroTracker:
                                  (macros['protein'] * 4 + macros['fat'] * 9))
                 macros['carbs'] = max(0, round(carb_calories / 4))
 
-        # Get meal timing suggestions
-        meal_timing = self.calculator.get_meal_timing(target_calories, meal_count=4)
-
-        # Get minimum nutrients
+        # Calculate meal timing suggestions
+        meal_timing = self.calculator.get_meal_timing(target_calories)
         min_nutrients = self.calculator.get_minimum_nutrients(stats, target_calories)
 
         return {
             'calories': target_calories,
+            'maintenance_calories': maintenance_calories,
             'macros': macros,
             'meal_timing': meal_timing,
             'minimum_nutrients': min_nutrients,
@@ -80,15 +98,15 @@ class MacroTracker:
             'adjustments': adjustments
         }
 
-    def get_progress_summary(self, days: int = 28) -> Dict:
+    def get_progress_summary(self) -> Dict:
         """Get comprehensive progress summary"""
         return {
-            'overall_changes': self.tracker.analyze_body_composition(days),
+            'overall_changes': self.tracker.analyze_body_composition(),
             'weekly_stats': self.data_manager.get_weekly_summary(),
-            'adherence': self.tracker.get_adherence_stats(days),
+            'adherence': self.tracker.get_adherence_stats(),
             'current_tdee': self.tracker.calculate_tdee(),
-            'trends': self.tracker.calculate_trends(days),
-            'suggestions': self.tracker.suggest_adjustments(days)
+            'trends': self.tracker.calculate_trends(),
+            'suggestions': self.tracker.suggest_adjustments()
         }
 
     def export_data(self, format: str = 'csv', filename: Optional[str] = None) -> str:
@@ -106,88 +124,9 @@ class MacroTracker:
         else:
             raise ValueError(f"Unsupported export format: {format}")
 
-    def generate_report(self, filename: str) -> str:
-        """Generate comprehensive progress report"""
-        progress = self.get_progress_summary()
-        weekly_stats = self.data_manager.get_weekly_summary()
-
-        # Get current recommendations
-        if self.logs:
-            latest = self.logs[-1]
-            stats = UserStats(
-                weight=latest.weight,
-                body_fat=latest.body_fat,
-                target_weight=latest.weight,  # Maintenance recommendations
-                target_body_fat=latest.body_fat
-            )
-            current_recs = self.get_recommendations(stats, DietMode.MAINTENANCE)
-        else:
-            current_recs = None
-
-        report_data = {
-            'progress': progress,
-            'weekly_stats': weekly_stats.to_dict() if len(weekly_stats) > 0 else {},
-            'current_recommendations': current_recs,
-            'generated_date': datetime.now().isoformat()
-        }
-
-        # Save report
-        with open(filename, 'w') as f:
-            json.dump(report_data, f, indent=2)
-
-        return f"Report generated and saved to {filename}"
-
     def _update_components(self) -> None:
         """Update all components with current data"""
         self.tracker = ProgressTracker(self.logs)
         self.calculator = NutritionCalculator(self.tracker)
         self.adjuster = DynamicAdjuster(self.tracker)
         self.data_manager = DataManager(self.tracker)
-
-
-# Example usage
-def main():
-    # Initialize tracker
-    tracker = MacroTracker()
-
-    # Load existing data if available
-    try:
-        tracker.load_data('tracking_history.csv')
-    except FileNotFoundError:
-        print("No existing data found, starting fresh")
-
-    # Create sample user stats
-    stats = UserStats(
-        weight=80.0,
-        body_fat=15.0,
-        target_weight=75.0,
-        target_body_fat=12.0
-    )
-
-    # Add sample log
-    log = DailyLog(
-        date=datetime.now(),
-        weight=80.0,
-        body_fat=15.0,
-        calories=2500,
-        protein=180,
-        carbs=250,
-        fat=83
-    )
-    tracker.add_log(log)
-
-    # Get recommendations
-    recommendations = tracker.get_recommendations(stats, DietMode.STANDARD_CUT)
-    print("\nRecommendations:", recommendations)
-
-    # Get progress summary
-    summary = tracker.get_progress_summary()
-    print("\nProgress Summary:", summary)
-
-    # Export data
-    tracker.export_data('csv', 'tracking_data')
-    print("\nData exported to tracking_data.csv")
-
-
-if __name__ == "__main__":
-    main()

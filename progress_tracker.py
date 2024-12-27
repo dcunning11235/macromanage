@@ -1,8 +1,7 @@
 from typing import List, Dict, Optional, Tuple
 from datetime import datetime, timedelta
 import numpy as np
-import pandas as pd
-from base_types import DailyLog, UserStats, ProgressMetrics
+from base_types import DailyLog
 
 
 class ProgressTracker:
@@ -12,57 +11,35 @@ class ProgressTracker:
     def calculate_tdee(self, days: int = 14) -> Optional[float]:
         """
         Calculate TDEE based on weight change and calorie intake
-
-        Uses linear regression to determine weight change rate and
-        averages daily calories over the period to estimate TDEE.
+        with greater weight given to recent data
         """
-        if len(self.logs) < 7:  # Need at least a week of data
+        if len(self.logs) < 7:
             return None
 
         recent_logs = sorted(self.logs[-days:], key=lambda x: x.date)
-        if len(recent_logs) < 7:
+        if len(self.logs) < 7:
             return None
 
-        # Calculate average daily calories
-        avg_calories = np.mean([log.calories for log in recent_logs])
+        # Calculate weighted average daily calories
+        # More recent days get higher weights
+        days_array = np.array([(log.date - recent_logs[0].date).days for log in recent_logs])
+        weights = 1 + (days_array / days_array.max()) * 0.5  # 1 to 1.5 weight factor
+        calories_array = np.array([log.calories for log in recent_logs])
+        avg_calories = np.average(calories_array, weights=weights)
 
-        # Create arrays for linear regression
-        dates = np.array([(log.date - recent_logs[0].date).days for log in recent_logs])
-        weights = np.array([log.weight for log in recent_logs])
-
-        # Perform linear regression to get daily weight change rate
-        slope, _ = np.polyfit(dates, weights, 1)
-        daily_weight_change = slope  # kg per day
+        # Perform weighted linear regression for weight change
+        weights_array = np.array([log.weight for log in recent_logs])
+        # Use same weighting scheme for the regression
+        slope, _ = np.polyfit(days_array, weights_array, 1, w=weights)
+        daily_weight_change = slope
 
         # Convert kg to lbs and calculate daily calorie adjustment
-        # Each pound of weight change represents 3500 calories
         daily_cal_adjustment = (daily_weight_change * 2.20462 * 3500)
 
         # TDEE = average calories - daily calorie surplus/deficit
         tdee = round(avg_calories - daily_cal_adjustment)
 
         return tdee if 500 <= tdee <= 10000 else None
-
-    def get_weekly_stats(self) -> List[Dict]:
-        """Calculate average stats for each week"""
-        if not self.logs:
-            return []
-
-        df = pd.DataFrame([vars(log) for log in self.logs])
-        df['week'] = pd.to_datetime(df['date']).dt.isocalendar().week
-
-        weekly_stats = df.groupby('week').agg({
-            'weight': ['mean', 'min', 'max', 'std'],
-            'body_fat': 'mean',
-            'calories': ['mean', 'std'],
-            'protein': 'mean',
-            'carbs': 'mean',
-            'fat': 'mean',
-            'lean_mass': 'mean',
-            'fat_mass': 'mean'
-        }).round(2)
-
-        return weekly_stats.to_dict()
 
     def calculate_trends(self, days: int = 28) -> Dict[str, float]:
         """Calculate trends in various metrics"""
@@ -91,24 +68,9 @@ class ProgressTracker:
 
         return trends
 
-    def detect_plateau(self, threshold: float = 0.2, weeks: int = 3) -> Tuple[bool, str]:
-        """Detect if progress has plateaued"""
-        changes = self.calculate_trends(weeks * 7)
-        if not changes or 'weight_trend' not in changes:
-            return False, "Insufficient data"
-
-        if abs(changes['weight_trend']) < threshold:
-            adherence = changes.get('calorie_adherence', 0)
-            if adherence > 0.9:
-                return True, "True plateau detected (good adherence)"
-            else:
-                return True, f"Plateau detected but adherence is low ({adherence:.0%})"
-
-        return False, "No plateau detected"
-
     def analyze_body_composition(self, days: int = 28) -> Dict[str, float]:
         """Analyze changes in body composition"""
-        if len(self.logs) < days:
+        if len(self.logs) < 2:
             return {}
 
         recent = sorted(self.logs[-days:], key=lambda x: x.date)
@@ -129,6 +91,21 @@ class ProgressTracker:
 
         return results
 
+    def calculate_changes(self, days: int = 7) -> Dict[str, float]:
+        """Calculate rate of change for different metrics"""
+        if len(self.logs) < days:
+            return {}
+
+        recent = self.logs[-days:]
+        start, end = recent[0], recent[-1]
+        weeks = days / 7
+
+        return {
+            'weight_change': (end.weight - start.weight) / weeks,
+            'fat_change': (end.fat_mass - start.fat_mass) / weeks if end.fat_mass and start.fat_mass else 0,
+            'lean_change': (end.lean_mass - start.lean_mass) / weeks if end.lean_mass and start.lean_mass else 0
+        }
+
     def get_adherence_stats(self, days: int = 28) -> Dict[str, float]:
         """Calculate adherence to targets"""
         if len(self.logs) < days:
@@ -142,43 +119,30 @@ class ProgressTracker:
             'protein_adherence': np.mean([1 if log.protein > 0 else 0 for log in recent])
         }
 
-    def get_progress_metrics(self) -> Optional[ProgressMetrics]:
-        """Get comprehensive progress metrics"""
-        return ProgressMetrics.from_logs(self.logs) if self.logs else None
-
-    def suggest_adjustments(self, stats: UserStats) -> List[str]:
-        """Suggest adjustments based on progress"""
+    def suggest_adjustments(self, days: int = 28) -> List[str]:
+        """Suggest adjustments based on analysis"""
         suggestions = []
-        trends = self.calculate_trends()
-        composition = self.analyze_body_composition()
+        trends = self.calculate_trends(days)
+        composition = self.analyze_body_composition(days)
+        adherence = self.get_adherence_stats(days)
 
         if not trends or not composition:
-            return ["Insufficient data for recommendations"]
-
-        # Check if losing too much lean mass
-        if composition.get('lean_mass_ratio', 1) < 0.7:
-            suggestions.append("Consider increasing protein intake and reducing deficit")
-
-        # Check if progress is stalled
-        is_plateaued, plateau_msg = self.detect_plateau()
-        if is_plateaued:
-            suggestions.append(f"Progress plateaued: {plateau_msg}")
+            return ["Need more data to make suggestions"]
 
         # Check adherence
-        adherence = self.get_adherence_stats()
         if adherence.get('logging_adherence', 1) < 0.8:
-            suggestions.append("Improve tracking consistency for better analysis")
+            suggestions.append("Try to log more consistently for better analysis")
+
+        # Check weight trend
+        if abs(trends.get('weight_trend', 0)) > 1.0:  # More than 1kg/week
+            suggestions.append("Weight changing faster than recommended")
+
+        # Check body composition
+        if composition.get('lean_mass_ratio', 1) < 0.7:  # More than 30% of loss from lean mass
+            suggestions.append("Consider increasing protein and reducing deficit")
+
+        # Check consistency
+        if trends.get('weight_cv', 0) > 1.5:  # High weight variability
+            suggestions.append("Weight showing high variability. Try to weigh at consistent times")
 
         return suggestions
-
-    def generate_report(self) -> Dict:
-        """Generate comprehensive progress report"""
-        return {
-            'trends': self.calculate_trends(),
-            'body_composition': self.analyze_body_composition(),
-            'adherence': self.get_adherence_stats(),
-            'weekly_stats': self.get_weekly_stats(),
-            'tdee': self.calculate_tdee(),
-            'suggestions': self.suggest_adjustments(None),  # Pass actual stats if available
-            'metrics': self.get_progress_metrics()
-        }

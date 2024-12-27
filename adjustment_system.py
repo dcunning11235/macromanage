@@ -2,7 +2,6 @@ from dataclasses import dataclass
 from typing import List, Dict, Optional, Tuple
 from datetime import datetime, timedelta
 from base_types import UserStats, DietMode, DailyLog
-from progress_tracker import ProgressTracker
 
 
 @dataclass
@@ -15,83 +14,19 @@ class Adjustment:
 
 
 class DynamicAdjuster:
-    def __init__(self, tracker: ProgressTracker):
+    def __init__(self, tracker):
         self.tracker = tracker
 
-    def calculate_weekly_change(self, days: int = 7) -> Dict[str, float]:
-        """Calculate rate of change for weight and body composition"""
-        logs = self.tracker.logs
-        if len(logs) < days:
-            return {}
-
-        recent = sorted(logs[-days:], key=lambda x: x.date)
-        start, end = recent[0], recent[-1]
-        actual_days = (end.date - start.date).days
-        weeks = actual_days / 7
-
-        return {
-            'weight_change': (end.weight - start.weight) / weeks,
-            'lean_change': (end.lean_mass - start.lean_mass) / weeks if end.lean_mass and start.lean_mass else 0,
-            'fat_change': (end.fat_mass - start.fat_mass) / weeks if end.fat_mass and start.fat_mass else 0
-        }
-
-    def detect_plateau(self, weeks: int = 3) -> Tuple[bool, str]:
-        """Check if progress has stalled"""
-        changes = self.calculate_weekly_change(weeks * 7)
-        if not changes or 'weight_change' not in changes:
-            return False, "Insufficient data"
-
-        if abs(changes.get('weight_change', 0)) < 0.2:  # Less than 0.2kg/week change
-            adherence = self.check_diet_adherence()
-            if adherence > 0.9:
-                return True, "True plateau detected (good adherence)"
-            else:
-                return True, f"Plateau detected but adherence is low ({adherence:.0%})"
-
-        return False, "No plateau detected"
-
-    def check_diet_adherence(self, days: int = 14) -> float:
-        """Calculate adherence to calorie targets"""
-        logs = self.tracker.logs
-        if len(logs) < days:
-            return 1.0
-
-        recent = logs[-days:]
-        adherent_days = sum(1 for log in recent if log.calories > 0)
-        return adherent_days / len(recent)
-
-    def get_net_adjustment(self, adjustments: List[Adjustment]) -> Dict[str, int]:
-        """Combine all adjustments into final recommendations"""
-        if not adjustments:
-            return {'calories': 0, 'protein': 0}
-
-        # Prioritize by severity
-        high_priority = [adj for adj in adjustments if adj.severity == 'high']
-        med_priority = [adj for adj in adjustments if adj.severity == 'medium']
-
-        # Take the largest adjustment in each category
-        calorie_adj = max([adj.calories for adj in high_priority], default=0) if high_priority else \
-            max([adj.calories for adj in med_priority], default=0)
-
-        protein_adj = max([adj.protein for adj in high_priority], default=0) if high_priority else \
-            max([adj.protein for adj in med_priority], default=0)
-
-        return {
-            'calories': calorie_adj,
-            'protein': protein_adj
-        }
-
-    def calculate_adjustments(self, stats: UserStats, mode: DietMode) -> List[Adjustment]:
+    def calculate_adjustments(self, target_calories: int, stats: UserStats, mode: DietMode) -> List[Adjustment]:
         """Calculate needed adjustments based on progress"""
         adjustments = []
-        changes = self.calculate_weekly_change()
+        changes = self.tracker.calculate_changes()
 
         if not changes:
             return adjustments
 
-        weekly_change = changes.get('weight_change', 0)
-        logs = self.tracker.logs
-        current_body_fat = logs[-1].body_fat if logs else stats.body_fat
+        weekly_change = changes['weight_change']
+        current_body_fat = self.tracker.logs[-1].body_fat if self.tracker.logs else stats.body_fat
 
         # Calculate adaptive adjustment size
         base_adjustment = self._calculate_adaptive_adjustment(weekly_change, mode, current_body_fat)
@@ -216,9 +151,9 @@ class DynamicAdjuster:
             self, adjustments: List[Adjustment], mode: DietMode
     ) -> None:
         """Handle adjustments for plateaus"""
-        is_plateaued, message = self.detect_plateau()
+        is_plateaued = self.detect_plateau()
         if is_plateaued:
-            adherence = self.check_diet_adherence()
+            adherence = self.check_adherence()
             if adherence > 0.9:  # Good adherence
                 if mode in [DietMode.AGGRESSIVE_CUT, DietMode.STANDARD_CUT]:
                     adjustments.append(Adjustment(
@@ -244,3 +179,34 @@ class DynamicAdjuster:
                     severity="low",
                     suggestion="Focus on consistency before making adjustments"
                 ))
+
+    def detect_plateau(self, weeks: int = 3) -> bool:
+        """Check for plateaus in progress"""
+        changes = self.tracker.calculate_changes(weeks * 7)
+        return bool(changes and abs(changes.get('weight_change', 1.0)) < 0.2)
+
+    def check_adherence(self, days: int = 14) -> float:
+        """Check adherence to tracking"""
+        adherence_stats = self.tracker.get_adherence_stats(days)
+        return adherence_stats.get('calorie_adherence', 1.0)
+
+    def get_net_adjustment(self, adjustments: List[Adjustment]) -> Dict[str, int]:
+        """Combine all adjustments into final recommendations"""
+        if not adjustments:
+            return {'calories': 0, 'protein': 0}
+
+        # Prioritize by severity
+        high_priority = [adj for adj in adjustments if adj.severity == 'high']
+        med_priority = [adj for adj in adjustments if adj.severity == 'medium']
+
+        # Take the largest adjustment in each category
+        calorie_adj = max([adj.calories for adj in high_priority], default=0) if high_priority else \
+            max([adj.calories for adj in med_priority], default=0)
+
+        protein_adj = max([adj.protein for adj in high_priority], default=0) if high_priority else \
+            max([adj.protein for adj in med_priority], default=0)
+
+        return {
+            'calories': calorie_adj,
+            'protein': protein_adj
+        }

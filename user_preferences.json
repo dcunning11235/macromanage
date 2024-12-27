@@ -1,1 +1,1 @@
-{"unit_system": "imperial"}
+{"unit_system": "imperial", "diet_mode": "LEAN_BULK", "macro_preset": "HIGH_PROTEIN", "custom_macro_settings": {"protein_factor": 2.0, "fat_ratio": 0.3, "min_fat": 0.8, "protein_source": "body_weight"}}

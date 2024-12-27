@@ -1,13 +1,10 @@
 from typing import Dict, Tuple, Optional
-from base_types import UserStats, DietMode, MacroSplit
-from diet_configs import DietConfigs
-from progress_tracker import ProgressTracker
+from base_types import UserStats, DietMode, MacroPreset, MacroSplitConfig, MacroPresets
 
 
 class NutritionCalculator:
-    def __init__(self, tracker: ProgressTracker):
+    def __init__(self, tracker):
         self.tracker = tracker
-        self.configs = DietConfigs()
 
     def calculate_bmr(self, stats: UserStats) -> float:
         """Calculate Basal Metabolic Rate using Mifflin-St Jeor equation"""
@@ -24,8 +21,9 @@ class NutritionCalculator:
 
         return round(bmr)
 
-    def calculate_maintenance_calories(self, stats: UserStats) -> float:
-        """Calculate maintenance calories using TDEE or BMR"""
+    def calculate_target_calories(self, stats: UserStats, mode: DietMode) -> Tuple[int, str]:
+        """Calculate target calories based on diet mode and user stats"""
+        # Get TDEE from tracker if available
         tdee = self.tracker.calculate_tdee()
 
         if tdee is None:
@@ -33,87 +31,88 @@ class NutritionCalculator:
             bmr = self.calculate_bmr(stats)
             tdee = bmr * stats.activity_level.value
 
-        return round(tdee)
+        # Adjust based on diet mode
+        if mode == DietMode.AGGRESSIVE_CUT:
+            target_calories = round(tdee * 0.75)  # 25% deficit
+            description = "Aggressive deficit for maximum fat loss"
+        elif mode == DietMode.STANDARD_CUT:
+            target_calories = round(tdee * 0.80)  # 20% deficit
+            description = "Standard deficit for steady fat loss"
+        elif mode == DietMode.CONSERVATIVE_CUT:
+            target_calories = round(tdee * 0.85)  # 15% deficit
+            description = "Conservative deficit for gradual fat loss"
+        elif mode == DietMode.MAINTENANCE:
+            target_calories = round(tdee)
+            description = "Maintenance calories for body recomposition"
+        elif mode == DietMode.LEAN_BULK:
+            target_calories = round(tdee * 1.10)  # 10% surplus
+            description = "Slight surplus for lean muscle gain"
+        else:  # STANDARD_BULK
+            target_calories = round(tdee * 1.15)  # 15% surplus
+            description = "Moderate surplus for muscle gain"
 
-    def calculate_target_calories(self, stats: UserStats, mode: DietMode) -> Tuple[int, str]:
-        """Calculate target calories based on diet mode and user stats"""
-        maintenance = self.calculate_maintenance_calories(stats)
-        config = self.configs.get_config_for_user(mode, stats)
+        return target_calories, description
 
-        # Calculate initial target
-        target_calories = round(maintenance * config.calorie_adjustment)
+    def calculate_macros(self, calories: int, stats: UserStats,
+                         mode: DietMode, macro_preset: MacroPreset = MacroPreset.BALANCED,
+                         custom_split: Optional[MacroSplitConfig] = None) -> Dict[str, int]:
+        """Calculate macro targets based on calories and selected preset"""
+        preset_config = custom_split if macro_preset == MacroPreset.CUSTOM else MacroPresets.get_presets()[macro_preset]
 
-        # Apply deficit/surplus limits
-        adjustment = abs(target_calories - maintenance)
-        if adjustment > config.max_deficit:
-            target_calories = (maintenance - config.max_deficit
-                               if target_calories < maintenance
-                               else maintenance + config.max_deficit)
-        elif adjustment < config.min_deficit:
-            target_calories = (maintenance - config.min_deficit
-                               if target_calories < maintenance
-                               else maintenance + config.min_deficit)
+        # Calculate protein based on preset
+        if preset_config.protein_source == "lean_mass":
+            reference_weight = stats.weight * (1 - stats.body_fat / 100)
+        else:
+            reference_weight = stats.weight
 
-        explanation = (
-            f"Based on maintenance of {maintenance} calories. "
-            f"Using {config.name} mode ({config.description}). "
-            f"Creates a {'deficit' if target_calories < maintenance else 'surplus'} "
-            f"of {abs(target_calories - maintenance)} calories."
-        )
+        protein_grams = round(reference_weight * preset_config.protein_factor)
+        protein_calories = protein_grams * 4
 
-        return target_calories, explanation
+        # Calculate minimum fat requirement
+        min_fat_grams = round(stats.weight * preset_config.min_fat)
+        min_fat_calories = min_fat_grams * 9
 
-    def calculate_macros(self, calories: int, stats: UserStats, mode: DietMode) -> Dict[str, int]:
-        """Calculate macro targets based on calories and diet mode"""
-        config = self.configs.get_config_for_user(mode, stats)
-        lean_mass = stats.weight * (1 - stats.body_fat / 100)
+        # Calculate fat based on ratio, but ensure it meets minimum
+        target_fat_calories = calories * preset_config.fat_ratio
+        fat_calories = max(target_fat_calories, min_fat_calories)
+        fat_grams = round(fat_calories / 9)
 
-        # Calculate protein based on lean mass and diet mode
-        protein = round(lean_mass * config.protein_factor)
-        protein_calories = protein * 4
-
-        # Distribute remaining calories according to macro split
-        remaining_calories = calories - protein_calories
-        remaining_ratio = config.macro_split.fat / (config.macro_split.fat + config.macro_split.carbs)
-
-        fat_calories = remaining_calories * remaining_ratio
-        fat = round(fat_calories / 9)
-
-        carb_calories = remaining_calories - fat_calories
-        carbs = round(carb_calories / 4)
+        # Remaining calories go to carbs
+        remaining_calories = calories - protein_calories - fat_calories
+        carb_grams = max(0, round(remaining_calories / 4))
 
         return {
-            'protein': protein,
-            'fat': fat,
-            'carbs': carbs
-        }
-
-    def adjust_for_training_day(self, macros: Dict[str, int], is_training: bool) -> Dict[str, int]:
-        """Adjust macros based on training vs rest day"""
-        if not is_training:
-            # Reduce carbs on rest days, increase fats to maintain calories
-            carb_reduction = round(macros['carbs'] * 0.2)  # 20% reduction
-            fat_increase = round((carb_reduction * 4) / 9)  # Convert calories to fat grams
-
-            return {
-                'protein': macros['protein'],
-                'carbs': macros['carbs'] - carb_reduction,
-                'fat': macros['fat'] + fat_increase
+            'protein': protein_grams,
+            'fat': fat_grams,
+            'carbs': carb_grams,
+            'ratios': {
+                'protein': round(protein_calories / calories * 100),
+                'fat': round(fat_calories / calories * 100),
+                'carbs': round(remaining_calories / calories * 100)
             }
-        return macros
-
-    def calculate_refeed_macros(self, maintenance_calories: int, stats: UserStats) -> Dict[str, int]:
-        """Calculate macros for refeed days"""
-        refeed_calories = round(maintenance_calories * 1.0)  # At maintenance
-
-        # Higher carbs, lower fat, maintain protein
-        return {
-            'protein': round(stats.weight * 2.2),  # Maintain protein
-            'fat': round((maintenance_calories * 0.2) / 9),  # 20% from fat
-            'carbs': round((refeed_calories -
-                            (stats.weight * 2.2 * 4) -  # Protein calories
-                            (maintenance_calories * 0.2)) / 4)  # Remaining to carbs
         }
+
+    def get_meal_timing(self, calories: int, meal_count: int = 4) -> Dict[str, int]:
+        """Calculate meal timing based on total calories"""
+        if meal_count == 3:
+            # Standard 3-meal split
+            return {
+                'breakfast': round(calories * 0.25),
+                'lunch': round(calories * 0.35),
+                'dinner': round(calories * 0.40)
+            }
+        elif meal_count == 4:
+            # 4-meal split with snack
+            return {
+                'breakfast': round(calories * 0.25),
+                'lunch': round(calories * 0.30),
+                'snack': round(calories * 0.15),
+                'dinner': round(calories * 0.30)
+            }
+        else:
+            # Equal split for other meal counts
+            meal_calories = round(calories / meal_count)
+            return {f'meal_{i + 1}': meal_calories for i in range(meal_count)}
 
     def get_minimum_nutrients(self, stats: UserStats, calories: int) -> Dict[str, float]:
         """Calculate minimum recommended nutrients"""
@@ -122,18 +121,4 @@ class NutritionCalculator:
             'fat': round(stats.weight * 0.8),  # Minimum fat
             'fiber': round(calories / 1000 * 14),  # Fiber based on calories
             'water': round(stats.weight * 0.033)  # Water in liters
-        }
-
-    def get_meal_timing(self, calories: int, meal_count: int) -> Dict[str, int]:
-        """Distribute calories across meals"""
-        if meal_count == 3:
-            distribution = [0.3, 0.4, 0.3]  # 30/40/30 split
-        elif meal_count == 4:
-            distribution = [0.25, 0.3, 0.25, 0.2]
-        else:
-            distribution = [1 / meal_count] * meal_count
-
-        return {
-            f'meal_{i + 1}': round(calories * dist)
-            for i, dist in enumerate(distribution)
         }

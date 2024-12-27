@@ -1,12 +1,15 @@
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Optional
+from typing import Optional, Dict
 from enum import Enum
 import numpy as np
 
+class NutrientType(Enum):
+    PROTEIN = "protein"
+    CARBS = "carbs"
+    FAT = "fat"
 
 class DietMode(Enum):
-    """Different diet modes with specific targets and adjustments"""
     AGGRESSIVE_CUT = "aggressive_cut"
     STANDARD_CUT = "standard_cut"
     CONSERVATIVE_CUT = "conservative_cut"
@@ -14,22 +17,92 @@ class DietMode(Enum):
     LEAN_BULK = "lean_bulk"
     STANDARD_BULK = "standard_bulk"
 
-
 class TrainingLevel(Enum):
-    """User's training experience level"""
     BEGINNER = "beginner"
     INTERMEDIATE = "intermediate"
     ADVANCED = "advanced"
 
-
 class ActivityLevel(Enum):
-    """Daily activity multipliers for TDEE calculation"""
     SEDENTARY = 1.2
     LIGHT = 1.375
     MODERATE = 1.55
     VERY_ACTIVE = 1.725
     EXTREMELY_ACTIVE = 1.9
 
+class MacroPreset(Enum):
+    BALANCED = "balanced"
+    HIGH_PROTEIN = "high_protein"
+    KETO = "keto"
+    HIGH_CARB = "high_carb"
+    LEAN_BULK = "lean_bulk"
+    PERFORMANCE = "performance"
+    CUSTOM = "custom"
+
+@dataclass
+class MacroSplitConfig:
+    name: str
+    description: str
+    protein_factor: float  # g/kg of body weight or lean mass
+    fat_ratio: float  # percentage of total calories
+    min_fat: float  # minimum grams per kg bodyweight
+    protein_source: str = "body_weight"  # or "lean_mass"
+
+class MacroPresets:
+    @staticmethod
+    def get_presets() -> Dict[MacroPreset, MacroSplitConfig]:
+        return {
+            MacroPreset.BALANCED: MacroSplitConfig(
+                name="Balanced",
+                description="Standard macro split suitable for general fitness",
+                protein_factor=2.0,
+                fat_ratio=0.30,
+                min_fat=0.8
+            ),
+            MacroPreset.HIGH_PROTEIN: MacroSplitConfig(
+                name="High Protein",
+                description="Extra protein for muscle preservation during cuts",
+                protein_factor=2.4,
+                fat_ratio=0.25,
+                min_fat=0.8,
+                protein_source="lean_mass"
+            ),
+            MacroPreset.KETO: MacroSplitConfig(
+                name="Ketogenic",
+                description="Very low carb, high fat for ketosis",
+                protein_factor=2.0,
+                fat_ratio=0.70,
+                min_fat=1.2
+            ),
+            MacroPreset.HIGH_CARB: MacroSplitConfig(
+                name="High Carb",
+                description="Higher carbs for endurance training",
+                protein_factor=1.8,
+                fat_ratio=0.20,
+                min_fat=0.6
+            ),
+            MacroPreset.LEAN_BULK: MacroSplitConfig(
+                name="Lean Bulk",
+                description="Optimized for lean muscle gain",
+                protein_factor=2.2,
+                fat_ratio=0.25,
+                min_fat=0.8,
+                protein_source="lean_mass"
+            ),
+            MacroPreset.PERFORMANCE: MacroSplitConfig(
+                name="Performance",
+                description="Balanced split for athletic performance",
+                protein_factor=2.0,
+                fat_ratio=0.25,
+                min_fat=0.8
+            ),
+            MacroPreset.CUSTOM: MacroSplitConfig(
+                name="Custom",
+                description="User-defined macro split",
+                protein_factor=2.0,
+                fat_ratio=0.30,
+                min_fat=0.8
+            )
+        }
 
 @dataclass
 class UserStats:
@@ -57,31 +130,6 @@ class UserStats:
         if self.height:
             return self.weight / ((self.height / 100) ** 2)
         return None
-
-
-@dataclass
-class MacroSplit:
-    """Defines the ratio of macronutrients"""
-    protein: float  # percentage of total calories
-    fat: float
-    carbs: float
-
-    def validate(self) -> bool:
-        """Ensure macro percentages sum to 100"""
-        return np.isclose(self.protein + self.fat + self.carbs, 100, atol=0.1)
-
-    def to_grams(self, total_calories: float) -> dict:
-        """Convert percentage-based macros to grams"""
-        protein_cals = total_calories * (self.protein / 100)
-        fat_cals = total_calories * (self.fat / 100)
-        carb_cals = total_calories * (self.carbs / 100)
-
-        return {
-            'protein': round(protein_cals / 4),  # 4 calories per gram
-            'fat': round(fat_cals / 9),  # 9 calories per gram
-            'carbs': round(carb_cals / 4)  # 4 calories per gram
-        }
-
 
 @dataclass
 class DailyLog:
@@ -118,35 +166,3 @@ class DailyLog:
         """Check if logged macros match total calories"""
         macro_calories = self.calculate_total_calories()
         return abs(macro_calories - self.calories) < 10  # Allow small difference
-
-
-@dataclass
-class ProgressMetrics:
-    """Calculated progress metrics"""
-    weight_change: float  # kg per week
-    fat_mass_change: float
-    lean_mass_change: float
-    average_calories: float
-    average_protein: float
-    adherence_rate: float  # percentage of days logged
-    trend_direction: str  # 'increasing', 'decreasing', or 'stable'
-
-    @classmethod
-    def from_logs(cls, logs: list[DailyLog], days: int = 7):
-        """Calculate progress metrics from a list of daily logs"""
-        if len(logs) < 2:
-            return None
-
-        recent = sorted(logs[-days:], key=lambda x: x.date)
-        start, end = recent[0], recent[-1]
-        weeks = (end.date - start.date).days / 7
-
-        return cls(
-            weight_change=(end.weight - start.weight) / weeks,
-            fat_mass_change=(end.fat_mass - start.fat_mass) / weeks if end.fat_mass and start.fat_mass else 0,
-            lean_mass_change=(end.lean_mass - start.lean_mass) / weeks if end.lean_mass and start.lean_mass else 0,
-            average_calories=sum(log.calories for log in recent) / len(recent),
-            average_protein=sum(log.protein for log in recent) / len(recent),
-            adherence_rate=len(recent) / days * 100,
-            trend_direction='increasing' if end.weight > start.weight else 'decreasing' if end.weight < start.weight else 'stable'
-        )
